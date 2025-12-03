@@ -2,6 +2,7 @@ import random
 import smtplib
 import datetime
 import os
+from dotenv import load_dotenv
 
 class Person:
     def __init__(self, n, e, be):
@@ -12,6 +13,8 @@ class Person:
         self.matchedReciever = False
 
 def main():
+    load_dotenv()
+
     theGroup = []
     year = str(datetime.datetime.now().year)
 
@@ -27,7 +30,18 @@ def main():
     email = os.getenv("EMAIL")
     password = os.getenv("PASSWORD")
 
-    file = open(fileName,'r')
+    # Validate environment variables
+    if not fileName:
+        print("Error: FILENAME environment variable not set")
+        exit(1)
+    if not email:
+        print("Error: EMAIL environment variable not set")
+        exit(1)
+    if not password:
+        print("Error: PASSWORD environment variable not set")
+        exit(1)
+
+    file = open(fileName,"r")
     lines = file.readlines()
 
     for line in lines:
@@ -39,6 +53,7 @@ def main():
 
     # shuffle and check if anyone got matched with themselves
     # can plug in more rules here later i.e. no repeats from previous year
+    theGroupShuffled = []
     isMatched = False
     while (isMatched == False):
         isMatched = True
@@ -68,7 +83,7 @@ def main():
         toaddrs2 = theGroup[i].backupEmail
         matchedPerson = theGroupShuffled[i].name
         subject = 'Secret Santa ' + year
-        text = f'You, ({theGroup[i].name}), will be buying a Secret Santa gift for {matchedPerson}. This year\'s price range is $50-$60.'
+        text = f'You, ({theGroup[i].name}), will be buying a Secret Santa gift for {matchedPerson}. This year\'s price range is $75-$85.'
         msg = f'Subject: {subject} \n\n {text}'
         server.sendmail(email, toaddrs, msg)
         server.sendmail(email, toaddrs2, msg)
