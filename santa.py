@@ -37,7 +37,6 @@ class SantaError(Exception):
 class Person:
     name: str
     emails: tuple[str, ...]
-    household: str = ""
 
     @property
     def key(self) -> str:
@@ -50,6 +49,7 @@ class Config:
     participants: Path
     draws_dir: Path
     avoid_repeats_years: int
+    exclude: tuple[tuple[str, str], ...]
     budget: str
     exchange_date: str
     note: str
@@ -75,12 +75,17 @@ def load_config(path: Path) -> Config:
     rules, gift, email = raw.get("rules", {}), raw.get("gift", {}), raw.get("email", {})
     if not email.get("sender"):
         raise SantaError(f"{path.name}: set `sender` under [email]")
+    exclude = rules.get("exclude", [])
+    if not all(isinstance(pair, list) and len(pair) == 2 and all(isinstance(n, str) for n in pair)
+               for pair in exclude):
+        raise SantaError(f'{path.name}: `exclude` must be a list of name pairs, like [["Alice", "Bob"]]')
     base = path.parent
     return Config(
         year=int(raw.get("year", dt.date.today().year)),
         participants=base / raw.get("participants", "participants.csv"),
         draws_dir=base / raw.get("draws_dir", "draws"),
         avoid_repeats_years=int(rules.get("avoid_repeats_years", 1)),
+        exclude=tuple((a, b) for a, b in exclude),
         budget=gift.get("budget", ""),
         exchange_date=gift.get("exchange_date", ""),
         note=gift.get("note", "").strip(),
@@ -92,7 +97,7 @@ def load_config(path: Path) -> Config:
 
 
 def load_people(path: Path) -> list[Person]:
-    """Read the participants CSV: a header row with name,email and optionally backup_email,household."""
+    """Read the participants CSV: a header row with name,email and optionally backup_email."""
     if not path.exists():
         raise SantaError(f"Participants file not found: {path}")
     people: list[Person] = []
@@ -116,7 +121,7 @@ def load_people(path: Path) -> list[Person]:
             for e in emails:
                 if "@" not in e or " " in e:
                     raise SantaError(f"{path.name} line {lineno}: '{e}' doesn't look like an email address")
-            people.append(Person(rec["name"], emails, rec.get("household", "")))
+            people.append(Person(rec["name"], emails))
 
     counts = Counter(p.key for p in people)
     dupes = sorted({p.name for p in people if counts[p.key] > 1})
@@ -129,34 +134,45 @@ def load_people(path: Path) -> list[Person]:
 
 # ---------------------------------------------------------------- drawing
 
-def can_give(giver: Person, receiver: Person, past: frozenset[tuple[str, str]] = frozenset()) -> bool:
-    if giver.key == receiver.key:
-        return False
-    if giver.household and normalize(giver.household) == normalize(receiver.household):
-        return False
-    return (giver.key, receiver.key) not in past
+Blocked = frozenset[tuple[str, str]]  # (giver key, receiver key) pairs that aren't allowed
 
 
-def draw(people: list[Person], past: frozenset[tuple[str, str]] = frozenset(), *,
+def can_give(giver: Person, receiver: Person, blocked: Blocked = frozenset()) -> bool:
+    return giver.key != receiver.key and (giver.key, receiver.key) not in blocked
+
+
+def excluded_pairs(cfg: Config, people: list[Person]) -> Blocked:
+    """The `exclude` pairs from the config, blocked in both directions."""
+    known = {p.key for p in people}
+    pairs = set()
+    for a, b in cfg.exclude:
+        for name in (a, b):
+            if normalize(name) not in known:
+                raise SantaError(f"Excluded name '{name}' isn't in the participants file.")
+        pairs |= {(normalize(a), normalize(b)), (normalize(b), normalize(a))}
+    return frozenset(pairs)
+
+
+def draw(people: list[Person], blocked: Blocked = frozenset(), *,
          rand: random.Random = secure_rng, max_attempts: int = MAX_ATTEMPTS) -> list[tuple[Person, Person]]:
     """Return (giver, receiver) pairs. Every assignment that follows the rules is equally likely.
 
     Same method as the original script: shuffle, and reshuffle if any pair breaks a rule.
     """
     for p in people:
-        if not any(can_give(p, r, past) for r in people):
+        if not any(can_give(p, r, blocked) for r in people):
             raise SantaError(f"{p.name} isn't allowed to draw anyone. Loosen the rules "
-                             "(households or avoid_repeats_years).")
-        if not any(can_give(g, p, past) for g in people):
+                             "(exclude or avoid_repeats_years).")
+        if not any(can_give(g, p, blocked) for g in people):
             raise SantaError(f"Nobody is allowed to draw {p.name}. Loosen the rules "
-                             "(households or avoid_repeats_years).")
+                             "(exclude or avoid_repeats_years).")
     receivers = list(people)
     for _ in range(max_attempts):
         rand.shuffle(receivers)
-        if all(can_give(g, r, past) for g, r in zip(people, receivers)):
+        if all(can_give(g, r, blocked) for g, r in zip(people, receivers)):
             return list(zip(people, receivers))
     raise SantaError(f"No valid draw in {max_attempts:,} tries; the rules are probably too tight for this "
-                     "group. Try avoid_repeats_years = 0, or fewer people in the same household.")
+                     "group. Try avoid_repeats_years = 0, or fewer excluded pairs.")
 
 
 # ---------------------------------------------------------------- sealed draws
@@ -185,7 +201,7 @@ def load_draw(path: Path) -> dict[str, str]:
     return json.loads(base64.b64decode(data["sealed"]))
 
 
-def load_history(cfg: Config) -> tuple[frozenset[tuple[str, str]], list[int]]:
+def load_history(cfg: Config) -> tuple[Blocked, list[int]]:
     """Pairs from the last `avoid_repeats_years` draws, which can't happen again this year."""
     pairs: set[tuple[str, str]] = set()
     years = []
@@ -265,13 +281,13 @@ def confirm(prompt: str, word: str = "y") -> bool:
 
 def cmd_check(cfg: Config, args) -> int:
     people = load_people(cfg.participants)
+    excluded = excluded_pairs(cfg, people)
     past, years = load_history(cfg)
-    households = {normalize(p.household) for p in people if p.household}
-    print(f"{len(people)} people, {len(households)} household(s) that can't draw each other")
+    print(f"{len(people)} people, {len(cfg.exclude)} excluded pair(s)")
     if cfg.avoid_repeats_years:
         found = ", ".join(map(str, years)) or "none found"
         print(f"Avoiding repeats from the last {cfg.avoid_repeats_years} year(s): {found}")
-    draw(people, past)
+    draw(people, excluded | past)
     print("✓ A valid draw exists. (A practice draw was made and thrown away: nothing saved, sent or shown.)")
     if draw_path(cfg, cfg.year).exists():
         print(f"Note: the {cfg.year} draw has already been sent. Use `resend NAME` for lost emails.")
@@ -293,8 +309,9 @@ def cmd_send(cfg: Config, args) -> int:
     if path.exists() and not args.redraw:
         raise SantaError(f"The {cfg.year} draw was already sent. Use `resend NAME` for a lost email, "
                          "or `send --redraw` to start over (everyone gets a new match).")
+    excluded = excluded_pairs(cfg, people)
     past, _ = load_history(cfg)
-    pairs = draw(people, past)
+    pairs = draw(people, excluded | past)
 
     print(f"Ready to email {len(people)} people their {cfg.year} match.")
     if not args.yes and not confirm("Type 'send' to go: ", "send"):
@@ -342,18 +359,19 @@ def cmd_resend(cfg: Config, args) -> int:
 
 def cmd_stats(cfg: Config, args) -> int:
     people = load_people(cfg.participants)
+    excluded = excluded_pairs(cfg, people)
     # History is left out on purpose: showing which pairs are excluded would reveal last year's draw.
     rand = random.Random()
     counts: Counter[tuple[str, str]] = Counter()
     for _ in range(args.runs):
-        for g, r in draw(people, rand=rand):
+        for g, r in draw(people, excluded, rand=rand):
             counts[g.key, r.key] += 1
-    print(f"{args.runs:,} simulated draws with the self and household rules (nothing saved or sent).")
-    if not any(p.household for p in people):
-        print(f"With no households, every pairing should land near {1 / (len(people) - 1):.1%}.")
+    print(f"{args.runs:,} simulated draws with your exclusions (nothing saved or sent).")
+    if not excluded:
+        print(f"With no exclusions, every pairing should land near {1 / (len(people) - 1):.1%}.")
     print()
     for g in people:
-        cells = [f"{r.name} {counts[g.key, r.key] / args.runs:.1%}" for r in people if can_give(g, r)]
+        cells = [f"{r.name} {counts[g.key, r.key] / args.runs:.1%}" for r in people if can_give(g, r, excluded)]
         print(f"{g.name} → " + ", ".join(cells))
     return 0
 

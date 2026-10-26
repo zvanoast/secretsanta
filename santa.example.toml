@@ -6,6 +6,11 @@ draws_dir = "draws"            # sealed past draws; keep this folder between yea
 
 [rules]
 avoid_repeats_years = 1        # nobody gets the same person as the last N years (0 = allow)
+# Pairs who never draw each other, in either direction. Names must match participants.csv.
+exclude = [
+  ["Alice", "Bob"],
+  ["Carol", "Dave"],
+]
 
 [gift]
 budget = "$75–$85"

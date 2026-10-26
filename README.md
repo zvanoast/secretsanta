@@ -6,14 +6,14 @@ One file, Python 3.11+, no packages to install.
 
 ## Rules
 - Nobody draws themselves.
-- People in the same **household** (couples, roommates) never draw each other.
+- **Excluded pairs** never draw each other, in either direction. List them under `exclude` in `santa.toml`. That file is private, so nobody sees who you've kept apart.
 - Nobody gets the same person as **last year** (set `avoid_repeats_years`; 0 turns it off).
 
 Every draw that follows the rules is equally likely: the script shuffles, and reshuffles if any rule is broken.
 
 ## First-time setup
 1. `cp santa.example.toml santa.toml` and fill in your email, budget and date.
-2. `cp participants.example.csv participants.csv` and list everyone. `backup_email` and `household` are optional.
+2. `cp participants.example.csv participants.csv` and list everyone. `backup_email` is optional.
 3. Gmail needs an **app password**, not your normal one: <https://myaccount.google.com/apppasswords> (2-Step Verification must be on). The script asks for it every time, or reads `SANTA_PASSWORD`. It's never saved.
 4. Got a `backup 2025.txt` from the old script? Import it so last year's matches aren't repeated, then delete the text file:
    `python3 santa.py import-old "backup 2025.txt" --year 2025`
@@ -32,8 +32,8 @@ Someone lost their email? `python3 santa.py resend "Name"` sends it again withou
 
 ## Proving it's fair
 `python3 santa.py stats` simulates 100,000 draws and shows how often each person drew each other person.
-- With no households, every pairing lands near 1 in (people − 1).
-- With households, the numbers aren't all equal, and that's expected. A couple can only draw people outside their household, so those people get drawn by the couple more often, and draw each other a bit less. Every valid draw is still equally likely.
+- With no exclusions, every pairing lands near 1 in (people − 1).
+- With exclusions, the numbers aren't all equal, and that's expected. Someone with an excluded pair has fewer people left to draw, so each of those gets drawn by them more often. Every valid draw is still equally likely.
 
 `stats` leaves last year's draw out of the simulation, so it can't reveal it.
 

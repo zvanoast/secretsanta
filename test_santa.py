@@ -15,6 +15,7 @@ CONFIG = """
 year = 2026
 [rules]
 avoid_repeats_years = 1
+exclude = [["alice", "Bob"]]
 [gift]
 budget = "$75–$85"
 exchange_date = "Dec 19"
@@ -22,19 +23,19 @@ exchange_date = "Dec 19"
 sender = "organizer@example.com"
 """
 
-PEOPLE = """name,email,backup_email,household
+PEOPLE = """name,email,backup_email
 # a comment
-Alice,alice@example.com,,ab
-Bob,bob@example.com,bob2@example.com,ab
+Alice,alice@example.com,
+Bob,bob@example.com,bob2@example.com
 
-Carol,carol@example.com,,
+Carol,carol@example.com,
 Dave,dave@example.com
-Zoë,zoe@example.com,,
+Zoë,zoe@example.com,
 """
 
 
-def person(name, household=""):
-    return santa.Person(name, (f"{name.lower()}@example.com",), household)
+def person(name):
+    return santa.Person(name, (f"{name.lower()}@example.com",))
 
 
 class FakeSMTP:
@@ -79,14 +80,13 @@ class TempProject(unittest.TestCase):
 
 
 class DrawTests(unittest.TestCase):
-    def test_never_self_household_or_past(self):
-        people = [person("A", "h"), person("B", "h"), person("C"), person("D"), person("E")]
-        past = frozenset({("c", "d")})
+    def test_never_self_or_blocked(self):
+        people = [person(n) for n in "ABCDE"]
+        blocked = frozenset({("a", "b"), ("b", "a"), ("c", "d")})
         for _ in range(2000):
-            for g, r in santa.draw(people, past, rand=random.Random()):
+            for g, r in santa.draw(people, blocked, rand=random.Random()):
                 self.assertNotEqual(g.key, r.key)
-                self.assertFalse(g.household and g.household == r.household)
-                self.assertNotIn((g.key, r.key), past)
+                self.assertNotIn((g.key, r.key), blocked)
 
     def test_everyone_gives_and_receives_once(self):
         people = [person(n) for n in "ABCDEFG"]
@@ -102,9 +102,10 @@ class DrawTests(unittest.TestCase):
             self.assertAlmostEqual(n / 10_000, 1, delta=0.05)
 
     def test_impossible_rules_explained(self):
-        people = [person("A", "h"), person("B", "h"), person("C", "h")]
-        with self.assertRaisesRegex(santa.SantaError, "isn't allowed to draw anyone"):
-            santa.draw(people)
+        people = [person("A"), person("B"), person("C")]
+        blocked = frozenset({("a", "b"), ("a", "c")})
+        with self.assertRaisesRegex(santa.SantaError, "A isn't allowed to draw anyone"):
+            santa.draw(people, blocked)
 
     def test_too_tight_rules_give_up(self):
         # Everyone may draw someone, but no full assignment exists: A and B can only draw C.
@@ -120,7 +121,18 @@ class LoadingTests(TempProject):
         self.assertEqual([p.name for p in people], ["Alice", "Bob", "Carol", "Dave", "Zoë"])
         self.assertEqual(people[1].emails, ("bob@example.com", "bob2@example.com"))
         self.assertEqual(people[3].emails, ("dave@example.com",))
-        self.assertEqual(people[0].household, "ab")
+
+    def test_exclusions_both_directions_and_checked(self):
+        people = santa.load_people(self.dir / "participants.csv")
+        self.assertEqual(santa.excluded_pairs(self.cfg, people), {("alice", "bob"), ("bob", "alice")})
+        cfg = santa.Config(**{**self.cfg.__dict__, "exclude": (("Alice", "Bobby"),)})
+        with self.assertRaisesRegex(santa.SantaError, "'Bobby' isn't in the participants"):
+            santa.excluded_pairs(cfg, people)
+
+    def test_bad_exclude_format(self):
+        (self.dir / "santa.toml").write_text(CONFIG.replace('[["alice", "Bob"]]', '["Alice", "Bob"]'))
+        with self.assertRaisesRegex(santa.SantaError, "name pairs"):
+            self.cfg
 
     def test_duplicate_names_rejected(self):
         path = self.dir / "dupes.csv"
@@ -173,7 +185,7 @@ class CommandTests(TempProject):
         self.assertEqual(len(self.smtp.sent), 5)
         bob = next(m for m in self.smtp.sent if "Hi Bob" in m.get_content())
         self.assertEqual(bob["To"], "bob@example.com, bob2@example.com")
-        self.assertNotIn("Alice", bob.get_content().split("for:")[1].splitlines()[0])  # same household
+        self.assertNotIn("Alice", bob.get_content().split("for:")[1].splitlines()[0])  # excluded pair
 
         sent_lines = [line for line in out.splitlines() if line.startswith("  ✓")]
         self.assertEqual(sent_lines, [f"  ✓ {n}" for n in ["Alice", "Bob", "Carol", "Dave", "Zoë"]])
@@ -211,7 +223,7 @@ class CommandTests(TempProject):
         code, out = self.run_cli("stats", "--runs", "2000")
         self.assertEqual(code, 0)
         self.assertIn("Alice → ", out)
-        self.assertNotIn("Alice → Bob", out)  # same household never appears
+        self.assertNotIn("Bob → Alice", out)  # excluded pair never appears
 
 
 if __name__ == "__main__":
