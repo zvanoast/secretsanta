@@ -1,0 +1,22 @@
+# Copy to santa.toml (git-ignored) and fill in.
+
+# year = 2026                  # defaults to the current year
+participants = "participants.csv"
+draws_dir = "draws"            # sealed past draws; keep this folder between years
+
+[rules]
+avoid_repeats_years = 1        # nobody gets the same person as the last N years (0 = allow)
+
+[gift]
+budget = "$75–$85"
+exchange_date = "Saturday, December 19"
+note = """
+Bring your gift wrapped, with a tag for who it's to.
+"""
+
+[email]
+sender = "you@gmail.com"
+sender_name = "Secret Santa"
+smtp_host = "smtp.gmail.com"
+smtp_port = 465                # 465 = SSL, 587 = STARTTLS
+# The password is never stored: set SANTA_PASSWORD or type it when asked.
