@@ -200,6 +200,26 @@ class CommandTests(TempProject):
         self.assertEqual(code, 0)
         self.assertIn(f"for: {matches['Carol']}", self.smtp.sent[-1].get_content())
 
+    def test_yearly_record_keeps_gift_details(self):
+        self.run_cli("send", "--yes")
+        path = self.dir / "draws" / "2026.json"
+        record = santa.read_record(path)
+        self.assertEqual((record["budget"], record["exchange_date"], record["people"]), ("$75–$85", "Dec 19", 5))
+        self.assertIn("$75–$85", path.read_text(encoding="utf-8"))  # readable, not escaped
+
+        # Later config edits don't change what a resend says.
+        (self.dir / "santa.toml").write_text(CONFIG.replace("$75–$85", "$20"), encoding="utf-8")
+        self.run_cli("resend", "Dave", "--yes")
+        self.assertIn("Budget: $75–$85", self.smtp.sent[-1].get_content())
+
+    def test_history_shows_years_not_matches(self):
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Alice": "Carol", "Carol": "Alice"},
+                        {"budget": "$50"})
+        self.run_cli("send", "--yes")
+        code, out = self.run_cli("history")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["2025: 2 people, $50", "2026: 5 people, $75–$85, Dec 19"])
+
     def test_last_year_not_repeated(self):
         # Force a known 2025 draw, then check 2026 never repeats any of it.
         last = {"Alice": "Carol", "Bob": "Dave", "Carol": "Zoë", "Dave": "Alice", "Zoë": "Bob"}
@@ -214,9 +234,10 @@ class CommandTests(TempProject):
     def test_import_old(self):
         backup = self.dir / "backup 2025.txt"
         backup.write_text("Alice is buying a gift for Carol.\nBob is buying a gift for Dave.\n", encoding="utf-8")
-        code, out = self.run_cli("import-old", str(backup), "--year", "2025")
+        code, out = self.run_cli("import-old", str(backup), "--year", "2025", "--budget", "$75-$85")
         self.assertEqual(code, 0)
         self.assertNotIn("Carol", out)
+        self.assertEqual(santa.read_record(self.dir / "draws" / "2025.json")["budget"], "$75-$85")
         self.assertEqual(santa.load_draw(self.dir / "draws" / "2025.json"), {"Alice": "Carol", "Bob": "Dave"})
 
     def test_stats_runs(self):

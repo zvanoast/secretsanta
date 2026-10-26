@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import dataclasses
 import datetime as dt
 import getpass
 import json
@@ -181,24 +182,37 @@ def draw_path(cfg: Config, year: int) -> Path:
     return cfg.draws_dir / f"{year}.json"
 
 
-def save_draw(path: Path, year: int, matches: dict[str, str]) -> None:
-    """Save giver -> receiver names, base64-encoded so nobody reads them by accident.
+GIFT_FIELDS = ("budget", "exchange_date", "note")
 
-    This isn't encryption; it just keeps the organizer from seeing the matches at a glance.
+
+def save_draw(path: Path, year: int, matches: dict[str, str], gift: dict[str, str] | None = None) -> None:
+    """Save the year's record: gift details in the clear, and giver -> receiver names sealed.
+
+    Sealing is base64, not encryption; it just keeps the organizer from seeing the matches at a glance.
     """
+    gift = gift or {}
     sealed = base64.b64encode(json.dumps(matches, ensure_ascii=False).encode()).decode()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "year": year,
         "saved": dt.datetime.now().isoformat(timespec="seconds"),
+        "people": len(matches),
+        **{field: gift.get(field, "") for field in GIFT_FIELDS},
         "about": "Matches are sealed so they aren't seen by accident. Use `santa.py resend NAME`, not a decoder.",
         "sealed": sealed,
-    }, indent=2) + "\n", encoding="utf-8")
+    }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def gift_details(cfg: Config) -> dict[str, str]:
+    return {field: getattr(cfg, field) for field in GIFT_FIELDS}
+
+
+def read_record(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_draw(path: Path) -> dict[str, str]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return json.loads(base64.b64decode(data["sealed"]))
+    return json.loads(base64.b64decode(read_record(path)["sealed"]))
 
 
 def load_history(cfg: Config) -> tuple[Blocked, list[int]]:
@@ -321,7 +335,7 @@ def cmd_send(cfg: Config, args) -> int:
     failed = []
     # Log in before saving, so a wrong password doesn't leave a saved-but-unsent draw.
     with connect(cfg, get_password(cfg)) as server:
-        save_draw(path, cfg.year, {g.name: r.name for g, r in pairs})
+        save_draw(path, cfg.year, {g.name: r.name for g, r in pairs}, gift_details(cfg))
         for giver, receiver in pairs:
             try:
                 server.send_message(build_message(cfg, giver, receiver.name))
@@ -351,8 +365,11 @@ def cmd_resend(cfg: Config, args) -> int:
     if not args.yes and not confirm(f"Re-send {giver.name}'s match to {', '.join(giver.emails)}? [y/N] "):
         print("Cancelled.")
         return 1
+    # Re-send what everyone was told, even if santa.toml has changed since.
+    record = read_record(path)
+    as_sent = dataclasses.replace(cfg, **{f: record[f] for f in GIFT_FIELDS if f in record})
     with connect(cfg, get_password(cfg)) as server:
-        server.send_message(build_message(cfg, giver, matches[giver.key]))
+        server.send_message(build_message(as_sent, giver, matches[giver.key]))
     print(f"✓ Re-sent to {giver.name}.")
     return 0
 
@@ -383,9 +400,23 @@ def cmd_import_old(cfg: Config, args) -> int:
     matches = parse_old_backup(args.file.read_text(encoding="utf-8"))
     if not matches:
         raise SantaError(f"No 'X is buying a gift for Y.' lines found in {args.file}.")
-    save_draw(path, args.year, matches)
+    save_draw(path, args.year, matches, {"budget": args.budget, "exchange_date": args.date})
     print(f"✓ Imported {len(matches)} matches for {args.year} into {path} (sealed, not shown).")
     print(f"You can delete {args.file.name} now; it has the matches in plain text.")
+    return 0
+
+
+def cmd_history(cfg: Config, args) -> int:
+    paths = sorted(cfg.draws_dir.glob("*.json"))
+    if not paths:
+        print(f"No draws saved in {cfg.draws_dir} yet.")
+        return 0
+    for path in paths:
+        record = read_record(path)
+        details = [f"{len(load_draw(path))} people",
+                   record.get("budget") or "budget not recorded",
+                   record.get("exchange_date", "")]
+        print(f"{record.get('year', path.stem)}: " + ", ".join(d for d in details if d))
     return 0
 
 
@@ -406,11 +437,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("import-old", help="import a 'backup YEAR.txt' from the old script")
     p.add_argument("file", type=Path)
     p.add_argument("--year", type=int, required=True)
+    p.add_argument("--budget", default="", help='that year\'s budget, e.g. "$75–$85"')
+    p.add_argument("--date", default="", help="that year's exchange date")
     p.add_argument("--force", action="store_true", help="replace an existing draw for that year")
+    sub.add_parser("history", help="list past years: head count, budget and date (never the matches)")
     args = parser.parse_args(argv)
 
     commands = {"check": cmd_check, "test": cmd_test, "send": cmd_send, "resend": cmd_resend,
-                "stats": cmd_stats, "import-old": cmd_import_old}
+                "stats": cmd_stats, "import-old": cmd_import_old, "history": cmd_history}
     try:
         return commands[args.command](load_config(args.config), args)
     except SantaError as e:

@@ -16,7 +16,7 @@ Every draw that follows the rules is equally likely: the script shuffles, and re
 2. `cp participants.example.csv participants.csv` and list everyone. `backup_email` is optional.
 3. Gmail needs an **app password**, not your normal one: <https://myaccount.google.com/apppasswords> (2-Step Verification must be on). The script asks for it every time, or reads `SANTA_PASSWORD`. It's never saved.
 4. Got a `backup 2025.txt` from the old script? Import it so last year's matches aren't repeated, then delete the text file:
-   `python3 santa.py import-old "backup 2025.txt" --year 2025`
+   `python3 santa.py import-old "backup 2025.txt" --year 2025 --budget "$75–$85"`
 
 `santa.toml`, `participants.csv` and `draws/` are git-ignored. This repo is public, so keep it that way.
 
@@ -26,7 +26,14 @@ python3 santa.py check     # practice draw: catches typos and impossible rules; 
 python3 santa.py test      # emails you a sample, to check the login and how it looks
 python3 santa.py send      # the real draw: saves it sealed in draws/YEAR.json and emails everyone
 ```
-Someone lost their email? `python3 santa.py resend "Name"` sends it again without showing it to you.
+Someone lost their email? `python3 santa.py resend "Name"` sends it again without showing it to you. It uses the budget and date that were sent, even if you've edited `santa.toml` since.
+
+## Yearly records
+Each `send` saves `draws/YEAR.json`, the record for that year:
+- **readable:** the head count, budget, exchange date and note;
+- **sealed:** who drew whom.
+
+`python3 santa.py history` lists past years (head count, budget, date), never the matches.
 
 **Keep the `draws/` folder** between years; that's how last year's matches are avoided.
 
