@@ -421,6 +421,10 @@ def cmd_history(cfg: Config, args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows pipes default to cp1252, which can't print ✓ (a crash mid-send would leave it half done).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Draw Secret Santa names and email everyone their match.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="config file (default: santa.toml)")
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")

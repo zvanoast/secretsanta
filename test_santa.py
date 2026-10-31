@@ -130,7 +130,7 @@ class LoadingTests(TempProject):
             santa.excluded_pairs(cfg, people)
 
     def test_bad_exclude_format(self):
-        (self.dir / "santa.toml").write_text(CONFIG.replace('[["alice", "Bob"]]', '["Alice", "Bob"]'))
+        (self.dir / "santa.toml").write_text(CONFIG.replace('[["alice", "Bob"]]', '["Alice", "Bob"]'), encoding="utf-8")
         with self.assertRaisesRegex(santa.SantaError, "name pairs"):
             self.cfg
 
