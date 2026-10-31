@@ -240,6 +240,25 @@ class CommandTests(TempProject):
         self.assertEqual(santa.read_record(self.dir / "draws" / "2025.json")["budget"], "$75-$85")
         self.assertEqual(santa.load_draw(self.dir / "draws" / "2025.json"), {"Alice": "Carol", "Bob": "Dave"})
 
+    def test_unseal(self):
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Alice": "Carol", "Carol": "Alice"})
+        with mock.patch("builtins.input", return_value="y"):  # wrong word: needs 'unseal'
+            code, out = self.run_cli("unseal", "2025")
+        self.assertEqual(code, 1)
+        self.assertNotIn("→", out)
+
+        with mock.patch("builtins.input", return_value="unseal"):
+            code, out = self.run_cli("unseal", "2025")
+        self.assertEqual(code, 0)
+        self.assertIn("Alice → Carol\nCarol → Alice", out)
+
+        code, out = self.run_cli("unseal", "2025", "--name", "carol", "--yes")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "Carol → Alice")
+
+        self.assertEqual(self.run_cli("unseal", "2025", "--name", "Dave", "--yes")[0], 1)  # not in that year
+        self.assertEqual(self.run_cli("unseal", "--yes")[0], 1)  # no 2026 draw yet
+
     def test_stats_runs(self):
         code, out = self.run_cli("stats", "--runs", "2000")
         self.assertEqual(code, 0)

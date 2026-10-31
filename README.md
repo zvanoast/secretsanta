@@ -28,6 +28,8 @@ python3 santa.py send      # the real draw: saves it sealed in draws/YEAR.json a
 ```
 Someone lost their email? `python3 santa.py resend "Name"` sends it again without showing it to you. It uses the budget and date that were sent, even if you've edited `santa.toml` since.
 
+Last resort, when email won't do: `python3 santa.py unseal` shows this year's matches (or `unseal 2024` for a past year) after you type `unseal` to confirm. Add `--name "Name"` to see just one person's, so you don't spoil your own.
+
 ## Yearly records
 Each `send` saves `draws/YEAR.json`, the record for that year:
 - **readable:** the head count, budget, exchange date and note;
@@ -45,7 +47,7 @@ Each `send` saves `draws/YEAR.json`, the record for that year:
 `stats` leaves last year's draw out of the simulation, so it can't reveal it.
 
 ## Notes
-- **Sealed, not encrypted.** Draw files are base64-encoded so nobody sees matches by accident. The organizer could decode them on purpose; don't.
+- **Sealed, not encrypted.** Draw files are base64-encoded so nobody sees matches by accident. The organizer can read them on purpose with `unseal`; save that for emergencies.
 - **Your Sent folder.** Gmail keeps a copy of every email it sends, matches included. Don't look there, or send from a separate Gmail account.
 - **Other email providers:** set `smtp_host` and `smtp_port` (465 for SSL, 587 for STARTTLS).
 - **Tests:** `python3 -m unittest -v`

@@ -374,6 +374,32 @@ def cmd_resend(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_unseal(cfg: Config, args) -> int:
+    year = args.year or cfg.year
+    path = draw_path(cfg, year)
+    if not path.exists():
+        raise SantaError(f"No {year} draw found at {path}.")
+    matches = load_draw(path)
+    if args.name:
+        # Past years had different people, so look the name up in that year's draw, not participants.csv.
+        giver = next((g for g in matches if normalize(g) == normalize(args.name)), None)
+        if giver is None:
+            raise SantaError(f"'{args.name}' isn't in the {year} draw. Names in the draw: {', '.join(sorted(matches))}")
+        if not args.yes and not confirm(f"Show {giver}'s {year} match? [y/N] "):
+            print("Cancelled.")
+            return 1
+        print(f"{giver} → {matches[giver]}")
+        return 0
+    print(f"This shows all {len(matches)} matches for {year}, yours included. "
+          "For one lost email, `resend NAME` is better: it sends without showing you.")
+    if not args.yes and not confirm("Type 'unseal' to show them: ", "unseal"):
+        print("Cancelled: nothing shown.")
+        return 1
+    for giver in sorted(matches, key=normalize):
+        print(f"{giver} → {matches[giver]}")
+    return 0
+
+
 def cmd_stats(cfg: Config, args) -> int:
     people = load_people(cfg.participants)
     excluded = excluded_pairs(cfg, people)
@@ -436,7 +462,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("resend", help="re-send one person's email from this year's draw")
     p.add_argument("name")
     p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
-    p = sub.add_parser("stats", help="simulate many draws to show they're fair")
+    p = sub.add_parser("unseal", help="show a year's matches (last resort: they're no longer secret to you)")
+    p.add_argument("year", type=int, nargs="?", help="which year (default: this year)")
+    p.add_argument("--name", help="show only this person's match")
+    p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    p = sub.add_parser("stats",help="simulate many draws to show they're fair")
     p.add_argument("--runs", type=int, default=100_000)
     p = sub.add_parser("import-old", help="import a 'backup YEAR.txt' from the old script")
     p.add_argument("file", type=Path)
@@ -447,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("history", help="list past years: head count, budget and date (never the matches)")
     args = parser.parse_args(argv)
 
-    commands = {"check": cmd_check, "test": cmd_test, "send": cmd_send, "resend": cmd_resend,
+    commands = {"check": cmd_check, "test": cmd_test, "send": cmd_send, "resend": cmd_resend, "unseal": cmd_unseal,
                 "stats": cmd_stats, "import-old": cmd_import_old, "history": cmd_history}
     try:
         return commands[args.command](load_config(args.config), args)
