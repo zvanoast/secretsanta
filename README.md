@@ -44,7 +44,7 @@ Each `send` saves `draws/YEAR.json`, the record for that year:
 - With no exclusions, every pairing lands near 1 in (people − 1).
 - With exclusions, the numbers aren't all equal, and that's expected. Someone with an excluded pair has fewer people left to draw, so each of those gets drawn by them more often. Every valid draw is still equally likely.
 
-`stats` leaves last year's draw out of the simulation, so it can't reveal it.
+`stats` leaves last year's draw out of the simulation, so it can't reveal it. To see how avoiding repeats shifts the odds, `python3 santa.py stats --fake-last-year` makes up a random last year (printed, clearly not the real one) and simulates with it too.
 
 ## Notes
 - **Sealed, not encrypted.** Draw files are base64-encoded so nobody sees matches by accident. The organizer can read them on purpose with `unseal`; save that for emergencies.

@@ -1,5 +1,6 @@
 """Run with: python3 -m unittest -v"""
 import io
+import itertools
 import os
 import random
 import tempfile
@@ -99,6 +100,22 @@ class DrawTests(unittest.TestCase):
         counts = Counter((g.name, r.name) for _ in range(30_000) for g, r in santa.draw(people, rand=rand))
         for n in counts.values():  # each of 12 pairs expected 10,000 times
             self.assertAlmostEqual(n / 10_000, 1, delta=0.05)
+
+    def test_uniform_over_valid_draws_with_exclusions_and_last_year(self):
+        # Exclusions plus last year make pairing odds unequal, but every valid draw should stay equally likely.
+        people = [person(n) for n in "ABCDE"]
+        excluded = frozenset({("a", "b"), ("b", "a")})
+        last_year = frozenset({("a", "c"), ("b", "d"), ("c", "e"), ("d", "a"), ("e", "b")})
+        blocked = excluded | last_year
+        valid = {perm for perm in itertools.permutations("ABCDE")
+                 if all(santa.can_give(person(g), person(r), blocked) for g, r in zip("ABCDE", perm))}
+        rand = random.Random(2)
+        runs = 30_000
+        counts = Counter(tuple(r.name for _, r in santa.draw(people, blocked, rand=rand)) for _ in range(runs))
+        self.assertLessEqual(set(counts), valid)  # never a rule-breaking draw
+        self.assertEqual(set(counts), valid)  # and every valid draw turns up
+        for n in counts.values():
+            self.assertAlmostEqual(n / (runs / len(valid)), 1, delta=0.1)
 
     def test_impossible_rules_explained(self):
         people = [person("A"), person("B"), person("C")]
@@ -264,6 +281,17 @@ class CommandTests(TempProject):
         self.assertEqual(code, 0)
         self.assertIn("Alice → ", out)
         self.assertNotIn("Bob → Alice", out)  # excluded pair never appears
+
+    def test_stats_fake_last_year(self):
+        code, out = self.run_cli("stats", "--runs", "2000", "--fake-last-year")
+        self.assertEqual(code, 0)
+        self.assertIn("NOT the real one", out)
+        fake = dict(pair.split(" → ") for pair in out.splitlines()[1].strip().split(", "))
+        self.assertEqual(len(fake), 5)
+        for row in out.split("\n\n", 1)[1].splitlines():  # "Alice → Carol 30.1%, Dave 35.2%, ..."
+            giver, cells = row.split(" → ")
+            receivers = {cell.rsplit(" ", 1)[0] for cell in cells.split(", ")}
+            self.assertNotIn(fake[giver], receivers)  # made-up last-year match never drawn again
 
 
 if __name__ == "__main__":

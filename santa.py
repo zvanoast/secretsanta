@@ -393,19 +393,25 @@ def cmd_unseal(cfg: Config, args) -> int:
 
 def cmd_stats(cfg: Config, args) -> int:
     people = load_people(cfg.participants)
-    excluded = excluded_pairs(cfg, people)
-    # History is left out on purpose: showing which pairs are excluded would reveal last year's draw.
+    blocked = excluded = excluded_pairs(cfg, people)
+    # The real history is left out on purpose: showing which pairs are blocked would reveal last year's draw.
     rand = random.Random()
+    if args.fake_last_year:
+        fake = draw(people, excluded, rand=rand)
+        blocked = excluded | {(g.key, r.key) for g, r in fake}
+        print("Made-up last year (random, NOT the real one), which this year's draws must avoid:")
+        print("  " + ", ".join(f"{g.name} → {r.name}" for g, r in fake))
     counts: Counter[tuple[str, str]] = Counter()
     for _ in range(args.runs):
-        for g, r in draw(people, excluded, rand=rand):
+        for g, r in draw(people, blocked, rand=rand):
             counts[g.key, r.key] += 1
-    print(f"{args.runs:,} simulated draws with your exclusions (nothing saved or sent).")
-    if not excluded:
+    rules = "your exclusions" + (" and the made-up last year" if args.fake_last_year else "")
+    print(f"{args.runs:,} simulated draws with {rules} (nothing saved or sent).")
+    if not blocked:
         print(f"With no exclusions, every pairing should land near {1 / (len(people) - 1):.1%}.")
     print()
     for g in people:
-        cells = [f"{r.name} {counts[g.key, r.key] / args.runs:.1%}" for r in people if can_give(g, r, excluded)]
+        cells = [f"{r.name} {counts[g.key, r.key] / args.runs:.1%}" for r in people if can_give(g, r, blocked)]
         print(f"{g.name} → " + ", ".join(cells))
     return 0
 
@@ -455,8 +461,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("year", type=int, nargs="?", help="which year (default: this year)")
     p.add_argument("--name", help="show only this person's match")
     p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
-    p = sub.add_parser("stats",help="simulate many draws to show they're fair")
+    p = sub.add_parser("stats", help="simulate many draws to show they're fair")
     p.add_argument("--runs", type=int, default=100_000)
+    p.add_argument("--fake-last-year", action="store_true",
+                   help="also avoid a made-up random last year, to see how no-repeats shifts the odds")
     p = sub.add_parser("import-old", help="import a 'backup YEAR.txt' from the old script")
     p.add_argument("file", type=Path)
     p.add_argument("--year", type=int, required=True)
