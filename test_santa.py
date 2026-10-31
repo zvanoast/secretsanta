@@ -171,10 +171,6 @@ class LoadingTests(TempProject):
         self.assertNotIn("Zoë", path.read_text(encoding="utf-8"))
         self.assertEqual(santa.load_draw(path), {"Alice": "Zoë"})
 
-    def test_parse_old_backup_last_run_wins(self):
-        text = ("Alice is buying a gift for Bob.\nBob is buying a gift for Alice.\n"
-                "Alice is buying a gift for Carol.\nBob is buying a gift for Dave.\n")
-        self.assertEqual(santa.parse_old_backup(text), {"Alice": "Carol", "Bob": "Dave"})
 
 
 class MessageTests(TempProject):
@@ -217,6 +213,20 @@ class CommandTests(TempProject):
         self.assertEqual(code, 0)
         self.assertIn(f"gift for {matches['Carol']}.", self.smtp.sent[-1].get_content())
 
+    def test_dropped_connection_mid_send_is_reported(self):
+        sent = self.smtp.sent
+        def flaky_send(msg):
+            if len(sent) == 2:
+                raise ConnectionResetError("connection reset")
+            sent.append(msg)
+        self.smtp.send_message = flaky_send
+        code, out = self.run_cli("send", "--yes")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.count("  ✓ "), 2)
+        self.assertEqual(out.count("  ✗ "), 3)
+        self.assertIn("resend NAME", out)  # tells the organizer how to finish
+        self.assertTrue((self.dir / "draws" / "2026.json").exists())  # saved, so resend can finish the job
+
     def test_yearly_record_keeps_gift_details(self):
         self.run_cli("send", "--yes")
         path = self.dir / "draws" / "2026.json"
@@ -248,14 +258,40 @@ class CommandTests(TempProject):
             for g, r in santa.draw(people, past, rand=random.Random()):
                 self.assertNotEqual(last[g.name], r.name)
 
-    def test_import_old(self):
-        backup = self.dir / "backup 2025.txt"
-        backup.write_text("Alice is buying a gift for Carol.\nBob is buying a gift for Dave.\n", encoding="utf-8")
-        code, out = self.run_cli("import-old", str(backup), "--year", "2025", "--budget", "$75-$85")
+    def test_respelled_name_is_caught(self):
+        # "Caroll" last year, "Carol" now: likely one person, and her last-year match shouldn't slip through.
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Caroll": "Dave", "Dave": "Caroll"})
+        people = santa.load_people(self.dir / "participants.csv")
+        self.assertEqual([(old, p.name) for old, p in santa.renamed_suspects(self.cfg, people)], [("Caroll", "Carol")])
+
+        with mock.patch("builtins.input", return_value="y") as ask:
+            renames = santa.ask_renames(self.cfg, people)
+        self.assertIn("'Caroll'", ask.call_args[0][0])
+        self.assertIn("'Carol'", ask.call_args[0][0])
+        past, _ = santa.load_history(self.cfg, renames)
+        self.assertIn(("carol", "dave"), past)
+        self.assertIn(("dave", "carol"), past)
+
+        with mock.patch("builtins.input", return_value=""):  # default is no
+            self.assertEqual(santa.ask_renames(self.cfg, people), {})
+
+    def test_only_newcomers_are_suggested(self):
+        # Bob was there last year too, so last year's Rob is someone else.
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Rob": "Bob", "Bob": "Rob"})
+        self.assertEqual(santa.renamed_suspects(self.cfg, santa.load_people(self.dir / "participants.csv")), [])
+
+    def test_no_prompt_when_names_match(self):
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Carol": "Dave", "Dave": "Carol"})
+        with mock.patch("builtins.input", side_effect=AssertionError("should not ask")):
+            code, out = self.run_cli("check")
         self.assertEqual(code, 0)
-        self.assertNotIn("Carol", out)
-        self.assertEqual(santa.read_record(self.dir / "draws" / "2025.json")["budget"], "$75-$85")
-        self.assertEqual(santa.load_draw(self.dir / "draws" / "2025.json"), {"Alice": "Carol", "Bob": "Dave"})
+
+    def test_send_yes_warns_instead_of_asking(self):
+        santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Caroll": "Dave", "Dave": "Caroll"})
+        with mock.patch("builtins.input", side_effect=AssertionError("should not ask")):
+            code, out = self.run_cli("send", "--yes")
+        self.assertEqual(code, 0)
+        self.assertIn("Warning: A recent draw has 'Caroll'", out)
 
     def test_unseal(self):
         santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Alice": "Carol", "Carol": "Alice"})
@@ -281,6 +317,9 @@ class CommandTests(TempProject):
         self.assertEqual(code, 0)
         self.assertIn("Alice → ", out)
         self.assertNotIn("Bob → Alice", out)  # excluded pair never appears
+
+    def test_stats_needs_at_least_one_run(self):
+        self.assertEqual(self.run_cli("stats", "--runs", "0")[0], 1)
 
     def test_stats_fake_last_year(self):
         code, out = self.run_cli("stats", "--runs", "2000", "--fake-last-year")

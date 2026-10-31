@@ -10,11 +10,11 @@ import base64
 import csv
 import dataclasses
 import datetime as dt
+import difflib
 import getpass
 import json
 import os
 import random
-import re
 import smtplib
 import ssl
 import sys
@@ -211,29 +211,38 @@ def load_draw(path: Path) -> dict[str, str]:
     return json.loads(base64.b64decode(read_record(path)["sealed"]))
 
 
-def load_history(cfg: Config) -> tuple[Blocked, list[int]]:
-    """Pairs from the last `avoid_repeats_years` draws, which can't happen again this year."""
+def history_paths(cfg: Config) -> dict[int, Path]:
+    """The saved draws from the last `avoid_repeats_years` years."""
+    paths = {year: draw_path(cfg, year) for year in range(cfg.year - cfg.avoid_repeats_years, cfg.year)}
+    return {year: path for year, path in paths.items() if path.exists()}
+
+
+def load_history(cfg: Config, renames: dict[str, str] | None = None) -> tuple[Blocked, list[int]]:
+    """Pairs from recent draws, which can't happen again this year. `renames` maps an old name's key to a new one's."""
+    renames = renames or {}
     pairs: set[tuple[str, str]] = set()
-    years = []
-    for year in range(cfg.year - cfg.avoid_repeats_years, cfg.year):
-        path = draw_path(cfg, year)
-        if path.exists():
-            pairs |= {(normalize(g), normalize(r)) for g, r in load_draw(path).items()}
-            years.append(year)
-    return frozenset(pairs), years
+    paths = history_paths(cfg)
+    for path in paths.values():
+        for g, r in load_draw(path).items():
+            pairs.add((renames.get(normalize(g), normalize(g)), renames.get(normalize(r), normalize(r))))
+    return frozenset(pairs), list(paths)
 
 
-OLD_BACKUP_LINE = re.compile(r"^(.+?) is buying a gift for (.+?)\.?$")
+def renamed_suspects(cfg: Config, people: list[Person]) -> list[tuple[str, Person]]:
+    """(old name, current person) where a recent draw has a name that's gone and looks like a newcomer's.
 
-
-def parse_old_backup(text: str) -> dict[str, str]:
-    """Read a 'backup YEAR.txt' from the old script. It appended on every run, so the last run wins."""
-    matches: dict[str, str] = {}
-    for line in text.splitlines():
-        m = OLD_BACKUP_LINE.match(line.strip())
-        if m:
-            matches[m[1].strip()] = m[2].strip()
-    return matches
+    "Rob" last year and "Bob" this year might be one person spelled two ways, which would let a repeat slip by.
+    Only newcomers are suggested: if last year already had a Bob, Rob is someone else.
+    """
+    past = {normalize(n): n for path in history_paths(cfg).values() for pair in load_draw(path).items() for n in pair}
+    newcomers = {p.key: p for p in people if p.key not in past}
+    current = {p.key for p in people}
+    suspects = []
+    for key in sorted(k for k in past if k not in current):
+        close = difflib.get_close_matches(key, list(newcomers), n=1, cutoff=0.6)
+        if close:
+            suspects.append((past[key], newcomers.pop(close[0])))
+    return suspects
 
 
 # ---------------------------------------------------------------- email
@@ -282,12 +291,25 @@ def confirm(prompt: str, word: str = "y") -> bool:
     return input(prompt).strip().lower() == word
 
 
+def ask_renames(cfg: Config, people: list[Person], *, ask: bool = True) -> dict[str, str]:
+    """Ask about past names that look like a current one, so a respelled name can't dodge the no-repeat rule."""
+    renames = {}
+    for old, person in renamed_suspects(cfg, people):
+        question = (f"A recent draw has '{old}', who isn't in {cfg.participants.name}. "
+                    f"Is that the same person as '{person.name}'?")
+        if ask and confirm(f"{question} [y/N] "):
+            renames[normalize(old)] = person.key
+        elif not ask:
+            print(f"Warning: {question} If so, fix the spelling or last year's match could repeat.")
+    return renames
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_check(cfg: Config, args) -> int:
     people = load_people(cfg.participants)
     excluded = excluded_pairs(cfg, people)
-    past, years = load_history(cfg)
+    past, years = load_history(cfg, ask_renames(cfg, people))
     print(f"{len(people)} people, {len(cfg.exclude)} excluded pair(s)")
     if cfg.avoid_repeats_years:
         found = ", ".join(map(str, years)) or "none found"
@@ -315,7 +337,7 @@ def cmd_send(cfg: Config, args) -> int:
         raise SantaError(f"The {cfg.year} draw was already sent. Use `resend NAME` for a lost email, "
                          "or `send --redraw` to start over (everyone gets a new match).")
     excluded = excluded_pairs(cfg, people)
-    past, _ = load_history(cfg)
+    past, _ = load_history(cfg, ask_renames(cfg, people, ask=not args.yes))
     pairs = draw(people, excluded | past)
 
     print(f"Ready to email {len(people)} people their {cfg.year} match.")
@@ -331,7 +353,7 @@ def cmd_send(cfg: Config, args) -> int:
             try:
                 server.send_message(build_message(cfg, giver, receiver.name))
                 print(f"  ✓ {giver.name}")
-            except smtplib.SMTPException as e:
+            except (smtplib.SMTPException, OSError) as e:  # OSError: timeouts and dropped connections
                 failed.append(giver.name)
                 print(f"  ✗ {giver.name}: {e}")
 
@@ -392,6 +414,8 @@ def cmd_unseal(cfg: Config, args) -> int:
 
 
 def cmd_stats(cfg: Config, args) -> int:
+    if args.runs < 1:
+        raise SantaError("--runs must be at least 1.")
     people = load_people(cfg.participants)
     blocked = excluded = excluded_pairs(cfg, people)
     # The real history is left out on purpose: showing which pairs are blocked would reveal last year's draw.
@@ -413,19 +437,6 @@ def cmd_stats(cfg: Config, args) -> int:
     for g in people:
         cells = [f"{r.name} {counts[g.key, r.key] / args.runs:.1%}" for r in people if can_give(g, r, blocked)]
         print(f"{g.name} → " + ", ".join(cells))
-    return 0
-
-
-def cmd_import_old(cfg: Config, args) -> int:
-    path = draw_path(cfg, args.year)
-    if path.exists() and not args.force:
-        raise SantaError(f"{path} already exists (use --force to replace it).")
-    matches = parse_old_backup(args.file.read_text(encoding="utf-8"))
-    if not matches:
-        raise SantaError(f"No 'X is buying a gift for Y.' lines found in {args.file}.")
-    save_draw(path, args.year, matches, {"budget": args.budget})
-    print(f"✓ Imported {len(matches)} matches for {args.year} into {path} (sealed, not shown).")
-    print(f"You can delete {args.file.name} now; it has the matches in plain text.")
     return 0
 
 
@@ -465,16 +476,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--runs", type=int, default=100_000)
     p.add_argument("--fake-last-year", action="store_true",
                    help="also avoid a made-up random last year, to see how no-repeats shifts the odds")
-    p = sub.add_parser("import-old", help="import a 'backup YEAR.txt' from the old script")
-    p.add_argument("file", type=Path)
-    p.add_argument("--year", type=int, required=True)
-    p.add_argument("--budget", default="", help='that year\'s budget, e.g. "$75-$85"')
-    p.add_argument("--force", action="store_true", help="replace an existing draw for that year")
     sub.add_parser("history", help="list past years: head count and price range (never the matches)")
     args = parser.parse_args(argv)
 
     commands = {"check": cmd_check, "test": cmd_test, "send": cmd_send, "resend": cmd_resend, "unseal": cmd_unseal,
-                "stats": cmd_stats, "import-old": cmd_import_old, "history": cmd_history}
+                "stats": cmd_stats, "history": cmd_history}
     try:
         return commands[args.command](load_config(args.config), args)
     except SantaError as e:

@@ -7,7 +7,7 @@ One file, Python 3.11+, no packages to install.
 ## Rules
 - Nobody draws themselves.
 - **Excluded pairs** never draw each other, in either direction. List them under `exclude` in `santa.toml`. That file is private, so nobody sees who you've kept apart.
-- Nobody gets the same person as **last year** (set `avoid_repeats_years`; 0 turns it off).
+- Nobody gets the same person as **last year** (set `avoid_repeats_years`; 0 turns it off). If last year has a name that's missing now but close to a newcomer's (Rob vs Bob), `check` and `send` ask whether they're the same person, so a respelling can't sneak a repeat through.
 
 Every draw that follows the rules is equally likely: the script shuffles, and reshuffles if any rule is broken.
 
@@ -15,8 +15,6 @@ Every draw that follows the rules is equally likely: the script shuffles, and re
 1. `cp santa.example.toml santa.toml` and fill in your email and price range.
 2. `cp participants.example.csv participants.csv` and list everyone. `backup_email` is optional.
 3. Gmail needs an **app password**, not your normal one: <https://myaccount.google.com/apppasswords> (2-Step Verification must be on). The script asks for it every time, or reads `SANTA_PASSWORD`. It's never saved.
-4. Got a `backup 2025.txt` from the old script? Import it so last year's matches aren't repeated, then delete the text file:
-   `python3 santa.py import-old "backup 2025.txt" --year 2025 --budget "$75–$85"`
 
 `santa.toml`, `participants.csv` and `draws/` are git-ignored. This repo is public, so keep it that way.
 
