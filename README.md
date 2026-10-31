@@ -12,7 +12,7 @@ One file, Python 3.11+, no packages to install.
 Every draw that follows the rules is equally likely: the script shuffles, and reshuffles if any rule is broken.
 
 ## First-time setup
-1. `cp santa.example.toml santa.toml` and fill in your email, budget and date.
+1. `cp santa.example.toml santa.toml` and fill in your email and price range.
 2. `cp participants.example.csv participants.csv` and list everyone. `backup_email` is optional.
 3. Gmail needs an **app password**, not your normal one: <https://myaccount.google.com/apppasswords> (2-Step Verification must be on). The script asks for it every time, or reads `SANTA_PASSWORD`. It's never saved.
 4. Got a `backup 2025.txt` from the old script? Import it so last year's matches aren't repeated, then delete the text file:
@@ -26,16 +26,16 @@ python3 santa.py check     # practice draw: catches typos and impossible rules; 
 python3 santa.py test      # emails you a sample, to check the login and how it looks
 python3 santa.py send      # the real draw: saves it sealed in draws/YEAR.json and emails everyone
 ```
-Someone lost their email? `python3 santa.py resend "Name"` sends it again without showing it to you. It uses the budget and date that were sent, even if you've edited `santa.toml` since.
+Someone lost their email? `python3 santa.py resend "Name"` sends it again without showing it to you. It uses the price range that was sent, even if you've edited `santa.toml` since.
 
 Last resort, when email won't do: `python3 santa.py unseal` shows this year's matches (or `unseal 2024` for a past year) after you type `unseal` to confirm. Add `--name "Name"` to see just one person's, so you don't spoil your own.
 
 ## Yearly records
 Each `send` saves `draws/YEAR.json`, the record for that year:
-- **readable:** the head count, budget, exchange date and note;
+- **readable:** the head count and price range;
 - **sealed:** who drew whom.
 
-`python3 santa.py history` lists past years (head count, budget, date), never the matches.
+`python3 santa.py history` lists past years (head count, price range), never the matches.
 
 **Keep the `draws/` folder** between years; that's how last year's matches are avoided.
 

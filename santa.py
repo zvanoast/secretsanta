@@ -52,8 +52,6 @@ class Config:
     avoid_repeats_years: int
     exclude: tuple[tuple[str, str], ...]
     budget: str
-    exchange_date: str
-    note: str
     smtp_host: str
     smtp_port: int
     sender_email: str
@@ -88,8 +86,6 @@ def load_config(path: Path) -> Config:
         avoid_repeats_years=int(rules.get("avoid_repeats_years", 1)),
         exclude=tuple((a, b) for a, b in exclude),
         budget=gift.get("budget", ""),
-        exchange_date=gift.get("exchange_date", ""),
-        note=gift.get("note", "").strip(),
         smtp_host=email.get("smtp_host", "smtp.gmail.com"),
         smtp_port=int(email.get("smtp_port", 465)),
         sender_email=email["sender"],
@@ -182,7 +178,7 @@ def draw_path(cfg: Config, year: int) -> Path:
     return cfg.draws_dir / f"{year}.json"
 
 
-GIFT_FIELDS = ("budget", "exchange_date", "note")
+GIFT_FIELDS = ("budget",)
 
 
 def save_draw(path: Path, year: int, matches: dict[str, str], gift: dict[str, str] | None = None) -> None:
@@ -244,18 +240,13 @@ def parse_old_backup(text: str) -> dict[str, str]:
 
 def build_message(cfg: Config, giver: Person, receiver_name: str, *, test: bool = False) -> EmailMessage:
     msg = EmailMessage()
-    msg["Subject"] = f"{'[TEST] ' if test else ''}Secret Santa {cfg.year} 🎅"
+    msg["Subject"] = f"{'[TEST] ' if test else ''}Secret Santa {cfg.year}"
     msg["From"] = formataddr((cfg.sender_name, cfg.sender_email))
     msg["To"] = ", ".join(giver.emails)
-    lines = [f"Hi {giver.name},", "", f"You're buying a Secret Santa gift for: {receiver_name}", ""]
+    text = f"You ({giver.name}) will be buying a Secret Santa gift for {receiver_name}."
     if cfg.budget:
-        lines.append(f"Budget: {cfg.budget}")
-    if cfg.exchange_date:
-        lines.append(f"Gift exchange: {cfg.exchange_date}")
-    if cfg.note:
-        lines += ["", cfg.note]
-    lines += ["", "Keep it secret! 🤫"]
-    msg.set_content("\n".join(lines))
+        text += f" This year's price range is {cfg.budget}."
+    msg.set_content(text)
     return msg
 
 
@@ -310,7 +301,7 @@ def cmd_check(cfg: Config, args) -> int:
 
 def cmd_test(cfg: Config, args) -> int:
     me = Person(cfg.sender_name, (cfg.sender_email,))
-    msg = build_message(cfg, me, "(a sample name; this is only a test)", test=True)
+    msg = build_message(cfg, me, "a sample name (this is only a test)", test=True)
     with connect(cfg, get_password(cfg)) as server:
         server.send_message(msg)
     print(f"✓ Sent a sample email to {cfg.sender_email}. Check it looks right.")
@@ -426,7 +417,7 @@ def cmd_import_old(cfg: Config, args) -> int:
     matches = parse_old_backup(args.file.read_text(encoding="utf-8"))
     if not matches:
         raise SantaError(f"No 'X is buying a gift for Y.' lines found in {args.file}.")
-    save_draw(path, args.year, matches, {"budget": args.budget, "exchange_date": args.date})
+    save_draw(path, args.year, matches, {"budget": args.budget})
     print(f"✓ Imported {len(matches)} matches for {args.year} into {path} (sealed, not shown).")
     print(f"You can delete {args.file.name} now; it has the matches in plain text.")
     return 0
@@ -439,10 +430,8 @@ def cmd_history(cfg: Config, args) -> int:
         return 0
     for path in paths:
         record = read_record(path)
-        details = [f"{len(load_draw(path))} people",
-                   record.get("budget") or "budget not recorded",
-                   record.get("exchange_date", "")]
-        print(f"{record.get('year', path.stem)}: " + ", ".join(d for d in details if d))
+        budget = record.get("budget") or "budget not recorded"
+        print(f"{record.get('year', path.stem)}: {len(load_draw(path))} people, {budget}")
     return 0
 
 
@@ -471,10 +460,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("import-old", help="import a 'backup YEAR.txt' from the old script")
     p.add_argument("file", type=Path)
     p.add_argument("--year", type=int, required=True)
-    p.add_argument("--budget", default="", help='that year\'s budget, e.g. "$75–$85"')
-    p.add_argument("--date", default="", help="that year's exchange date")
+    p.add_argument("--budget", default="", help='that year\'s budget, e.g. "$75-$85"')
     p.add_argument("--force", action="store_true", help="replace an existing draw for that year")
-    sub.add_parser("history", help="list past years: head count, budget and date (never the matches)")
+    sub.add_parser("history", help="list past years: head count and price range (never the matches)")
     args = parser.parse_args(argv)
 
     commands = {"check": cmd_check, "test": cmd_test, "send": cmd_send, "resend": cmd_resend, "unseal": cmd_unseal,

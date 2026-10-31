@@ -13,11 +13,7 @@ exclude = [
 ]
 
 [gift]
-budget = "$75–$85"
-exchange_date = "Saturday, December 19"
-note = """
-Bring your gift wrapped, with a tag for who it's to.
-"""
+budget = "$75-$85"             # "This year's price range is $75-$85." (leave empty to skip)
 
 [email]
 sender = "you@gmail.com"

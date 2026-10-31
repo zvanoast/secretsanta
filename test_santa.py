@@ -18,7 +18,6 @@ avoid_repeats_years = 1
 exclude = [["alice", "Bob"]]
 [gift]
 budget = "$75–$85"
-exchange_date = "Dec 19"
 [email]
 sender = "organizer@example.com"
 """
@@ -164,8 +163,9 @@ class LoadingTests(TempProject):
 class MessageTests(TempProject):
     def test_message_handles_unicode_and_headers(self):
         msg = santa.build_message(self.cfg, person("Zoë"), "José")
-        self.assertIn("José", msg.get_content())
-        self.assertIn("$75–$85", msg.get_content())
+        self.assertEqual(msg.get_content().strip(), "You (Zoë) will be buying a Secret Santa gift for José. "
+                                                    "This year's price range is $75–$85.")
+        self.assertEqual(msg["Subject"], "Secret Santa 2026")
         self.assertEqual(msg["To"], "zoë@example.com")
         self.assertIn("organizer@example.com", msg["From"])
         msg.as_bytes()  # must serialize without UnicodeEncodeError
@@ -183,9 +183,9 @@ class CommandTests(TempProject):
         code, out = self.run_cli("send", "--yes")
         self.assertEqual(code, 0)
         self.assertEqual(len(self.smtp.sent), 5)
-        bob = next(m for m in self.smtp.sent if "Hi Bob" in m.get_content())
+        bob = next(m for m in self.smtp.sent if "You (Bob)" in m.get_content())
         self.assertEqual(bob["To"], "bob@example.com, bob2@example.com")
-        self.assertNotIn("Alice", bob.get_content().split("for:")[1].splitlines()[0])  # excluded pair
+        self.assertNotIn("Alice", bob.get_content().split("gift for ")[1].split(".")[0])  # excluded pair
 
         sent_lines = [line for line in out.splitlines() if line.startswith("  ✓")]
         self.assertEqual(sent_lines, [f"  ✓ {n}" for n in ["Alice", "Bob", "Carol", "Dave", "Zoë"]])
@@ -198,19 +198,19 @@ class CommandTests(TempProject):
 
         code, _ = self.run_cli("resend", "carol", "--yes")
         self.assertEqual(code, 0)
-        self.assertIn(f"for: {matches['Carol']}", self.smtp.sent[-1].get_content())
+        self.assertIn(f"gift for {matches['Carol']}.", self.smtp.sent[-1].get_content())
 
     def test_yearly_record_keeps_gift_details(self):
         self.run_cli("send", "--yes")
         path = self.dir / "draws" / "2026.json"
         record = santa.read_record(path)
-        self.assertEqual((record["budget"], record["exchange_date"], record["people"]), ("$75–$85", "Dec 19", 5))
+        self.assertEqual((record["budget"], record["people"]), ("$75–$85", 5))
         self.assertIn("$75–$85", path.read_text(encoding="utf-8"))  # readable, not escaped
 
         # Later config edits don't change what a resend says.
         (self.dir / "santa.toml").write_text(CONFIG.replace("$75–$85", "$20"), encoding="utf-8")
         self.run_cli("resend", "Dave", "--yes")
-        self.assertIn("Budget: $75–$85", self.smtp.sent[-1].get_content())
+        self.assertIn("price range is $75–$85.", self.smtp.sent[-1].get_content())
 
     def test_history_shows_years_not_matches(self):
         santa.save_draw(self.dir / "draws" / "2025.json", 2025, {"Alice": "Carol", "Carol": "Alice"},
@@ -218,7 +218,7 @@ class CommandTests(TempProject):
         self.run_cli("send", "--yes")
         code, out = self.run_cli("history")
         self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines(), ["2025: 2 people, $50", "2026: 5 people, $75–$85, Dec 19"])
+        self.assertEqual(out.splitlines(), ["2025: 2 people, $50", "2026: 5 people, $75–$85"])
 
     def test_last_year_not_repeated(self):
         # Force a known 2025 draw, then check 2026 never repeats any of it.
