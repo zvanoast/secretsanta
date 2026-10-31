@@ -1,0 +1,7 @@
+name,email,backup_email
+# backup_email is optional. Who can't draw whom goes in santa.toml (exclude).
+Alice,alice@example.com,
+Bob,bob@example.com,bob.work@example.com
+Carol,carol@example.com,
+Dave,dave@example.com,
+Erin,erin@example.com,

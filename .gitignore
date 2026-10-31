@@ -1,0 +1,10 @@
+# Real participants, settings and draws stay private (this repo is public).
+santa.toml
+participants.csv
+draws/
+backup *.txt
+analysisResults.txt
+.env
+
+__pycache__/
+*.pyc
